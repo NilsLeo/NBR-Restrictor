@@ -1,1 +1,4 @@
-input
+input/*
+.jukit
+__pycache__
+output/*

@@ -193,9 +193,14 @@ def split_history_future(df, user_col='user_id', basket_col='order_number'):
     # Find the most recent order for each user (assuming highest order_number is most recent)
     most_recent_orders = df.groupby(user_col)[basket_col].max()
     
-    # Create boolean masks for splitting
-    is_most_recent = df.set_index(user_col)[basket_col] == most_recent_orders
-    future_mask = df.set_index(user_col).index.map(is_most_recent.get)
+    # Create a function to check if a row is the most recent for its user
+    def is_most_recent_order(row):
+        user_id = row[user_col]
+        order_num = row[basket_col]
+        return most_recent_orders[user_id] == order_num
+    
+    # Apply the function to create a boolean mask
+    future_mask = df.apply(is_most_recent_order, axis=1)
     
     # Split data
     future_df = df[future_mask].reset_index(drop=True)
