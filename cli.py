@@ -1,17 +1,7 @@
 import argparse
 import pandas as pd
+import os
 from utils import merge_dataframes, get_unique_user_count, sample_random_users, filter_users_by_purchase_range, filter_baskets_by_depth_range, filter_users_by_basket_count_range, filter_by_product_assortment, split_history_future
-
-
-def show_menu():
-    print("\n=== NBR Restrictor - Data Limitation Menu ===")
-    print("1. Sample random users")
-    print("2. Filter by basket count per user (min-max)")
-    print("3. Filter by items per basket (min-max)")
-    print("4. Show current dataset statistics")
-    print("5. Save and exit")
-    print("0. Exit without saving")
-    return input("Choose an option: ").strip()
 
 
 def show_stats(df, user_col, basket_col):
@@ -22,7 +12,7 @@ def show_stats(df, user_col, basket_col):
     users = get_unique_user_count(df, user_col)
     total_records = len(df)
     
-    print(f"\n=== Current Dataset Statistics ===")
+    print(f"\n=== Dataset Statistics ===")
     print(f"Total records: {total_records}")
     print(f"Unique users: {users}")
     
@@ -51,145 +41,113 @@ def show_stats(df, user_col, basket_col):
                 break
 
 
-def get_positive_int(prompt):
-    while True:
-        try:
-            value = int(input(prompt))
-            if value > 0:
-                return value
-            else:
-                print("Please enter a positive integer")
-        except ValueError:
-            print("Please enter a valid integer")
-
-
-def get_range(item_name):
-    min_val = get_positive_int(f"Enter minimum {item_name}: ")
-    while True:
-        max_val = get_positive_int(f"Enter maximum {item_name}: ")
-        if max_val >= min_val:
-            return min_val, max_val
-        else:
-            print(f"Maximum must be >= {min_val}")
-
-
 def main():
     parser = argparse.ArgumentParser(description='NBR Restrictor - Dataset User Sampling Tool')
     parser.add_argument('history_file', help='Path to history dataset file')
     parser.add_argument('future_file', help='Path to future dataset file')
+    parser.add_argument('output_name', help='Output dataset name (without extension)')
+    
+    # Column configuration
     parser.add_argument('--user-col', default='user_id', help='Name of user column (default: user_id)')
     parser.add_argument('--basket-col', default='order_number', help='Name of basket column (default: order_number)')
     parser.add_argument('--product-col', default='product_id', help='Name of product column (default: product_id)')
     
+    # Filtering options
+    parser.add_argument('--sample-users', type=int, help='Number of random users to sample')
+    parser.add_argument('--min-baskets', type=int, help='Minimum baskets per user')
+    parser.add_argument('--max-baskets', type=int, help='Maximum baskets per user')
+    parser.add_argument('--min-items', type=int, help='Minimum items per basket')
+    parser.add_argument('--max-items', type=int, help='Maximum items per basket')
+    
+    # Options
+    parser.add_argument('--stats', action='store_true', help='Show dataset statistics')
+    parser.add_argument('--output-dir', default='output', help='Output directory (default: output)')
+    
     args = parser.parse_args()
     
     # Merge the datasets
-    print(f"Merging {args.history_file} and {args.future_file}...")
+    print(f"Loading datasets...")
     df = merge_dataframes(args.history_file, args.future_file)
     print(f"Loaded dataset with {len(df)} records and {get_unique_user_count(df, args.user_col)} unique users")
     
-    # Menu loop
-    while True:
-        choice = show_menu()
+    # Show initial stats if requested
+    if args.stats:
+        show_stats(df, args.user_col, args.basket_col)
+    
+    # Apply filters in order
+    
+    # 1. Sample random users if specified
+    if args.sample_users:
+        current_users = get_unique_user_count(df, args.user_col)
+        if args.sample_users > current_users:
+            print(f"Warning: Requested {args.sample_users} users, but only {current_users} available. Using all users.")
+            args.sample_users = current_users
         
-        if choice == '1':  # Sample random users
-            current_users = get_unique_user_count(df, args.user_col)
-            if current_users == 0:
-                print("No users in dataset!")
-                continue
-                
-            print(f"Current users: {current_users}")
-            while True:
-                try:
-                    n_users = int(input(f"How many users to keep? (max {current_users}): "))
-                    if 1 <= n_users <= current_users:
-                        break
-                    else:
-                        print(f"Please enter a number between 1 and {current_users}")
-                except ValueError:
-                    print("Please enter a valid integer")
-            
-            df = sample_random_users(df, n_users, args.user_col)
-            print(f"Sampled {n_users} random users. Dataset now has {len(df)} records.")
-            
-        elif choice == '2':  # Filter by basket count per user
-            if len(df) == 0:
-                print("Dataset is empty!")
-                continue
-            if args.basket_col not in df.columns:
-                print(f"Column '{args.basket_col}' not found in dataset!")
-                continue
-                
-            show_stats(df, args.user_col, args.basket_col)
-            min_baskets, max_baskets = get_range("baskets per user")
-            
-            original_users = get_unique_user_count(df, args.user_col)
-            df = filter_users_by_basket_count_range(df, min_baskets, max_baskets, args.user_col, args.basket_col)
-            new_users = get_unique_user_count(df, args.user_col)
-            
-            print(f"Filtered from {original_users} to {new_users} users with {min_baskets}-{max_baskets} baskets each")
-            
-        elif choice == '3':  # Filter by items per basket
-            if len(df) == 0:
-                print("Dataset is empty!")
-                continue
-            if args.basket_col not in df.columns:
-                print(f"Column '{args.basket_col}' not found in dataset!")
-                continue
-                
-            show_stats(df, args.user_col, args.basket_col)
-            min_items, max_items = get_range("items per basket")
-            
-            # Create temp df to count unique baskets correctly
-            df_temp = df.copy()
-            df_temp['unique_basket_id'] = df_temp[args.user_col].astype(str) + '_' + df_temp[args.basket_col].astype(str)
-            original_baskets = df_temp['unique_basket_id'].nunique()
-            
-            df = filter_baskets_by_depth_range(df, min_items, max_items, args.basket_col, args.user_col)
-            
-            df_temp = df.copy()
-            df_temp['unique_basket_id'] = df_temp[args.user_col].astype(str) + '_' + df_temp[args.basket_col].astype(str)
-            new_baskets = df_temp['unique_basket_id'].nunique()
-            
-            print(f"Filtered from {original_baskets} to {new_baskets} baskets with {min_items}-{max_items} items each")
-            
-        elif choice == '4':  # Show statistics
-            show_stats(df, args.user_col, args.basket_col)
-            
-        elif choice == '5':  # Save and exit
-            if len(df) == 0:
-                print("Cannot save empty dataset!")
-                continue
-                
-            # Get dataset name from user
-            dataset_name = input("Enter dataset name (e.g., 'tafeng_few_customers'): ").strip()
-            if not dataset_name:
-                print("Dataset name cannot be empty!")
-                continue
-                
-            # Split data into history and future
-            history_df, future_df = split_history_future(df, args.user_col, args.basket_col)
-            
-            # Save the results
-            history_file = f"output/{dataset_name}_history.csv"
-            future_file = f"output/{dataset_name}_future.csv"
-            
-            history_df.to_csv(history_file, index=False)
-            future_df.to_csv(future_file, index=False)
-            
-            print(f"\nDatasets saved:")
-            print(f"History: {history_file} ({len(history_df)} records)")
-            print(f"Future: {future_file} ({len(future_df)} records)")
-            show_stats(df, args.user_col, args.basket_col)
-            print("Done!")
-            break
-            
-        elif choice == '0':  # Exit without saving
-            print("Exiting without saving.")
-            break
-            
-        else:
-            print("Invalid choice. Please try again.")
+        df = sample_random_users(df, args.sample_users, args.user_col)
+        print(f"Sampled {args.sample_users} random users. Dataset now has {len(df)} records.")
+    
+    # 2. Filter by basket count per user
+    if args.min_baskets is not None or args.max_baskets is not None:
+        if args.basket_col not in df.columns:
+            print(f"Error: Column '{args.basket_col}' not found in dataset!")
+            return
+        
+        min_baskets = args.min_baskets if args.min_baskets is not None else 1
+        max_baskets = args.max_baskets if args.max_baskets is not None else float('inf')
+        
+        original_users = get_unique_user_count(df, args.user_col)
+        df = filter_users_by_basket_count_range(df, min_baskets, max_baskets, args.user_col, args.basket_col)
+        new_users = get_unique_user_count(df, args.user_col)
+        
+        print(f"Filtered from {original_users} to {new_users} users with {min_baskets}-{max_baskets} baskets each")
+    
+    # 3. Filter by items per basket
+    if args.min_items is not None or args.max_items is not None:
+        if args.basket_col not in df.columns:
+            print(f"Error: Column '{args.basket_col}' not found in dataset!")
+            return
+        
+        min_items = args.min_items if args.min_items is not None else 1
+        max_items = args.max_items if args.max_items is not None else float('inf')
+        
+        # Create temp df to count unique baskets correctly
+        df_temp = df.copy()
+        df_temp['unique_basket_id'] = df_temp[args.user_col].astype(str) + '_' + df_temp[args.basket_col].astype(str)
+        original_baskets = df_temp['unique_basket_id'].nunique()
+        
+        df = filter_baskets_by_depth_range(df, min_items, max_items, args.basket_col, args.user_col)
+        
+        df_temp = df.copy()
+        df_temp['unique_basket_id'] = df_temp[args.user_col].astype(str) + '_' + df_temp[args.basket_col].astype(str)
+        new_baskets = df_temp['unique_basket_id'].nunique()
+        
+        print(f"Filtered from {original_baskets} to {new_baskets} baskets with {min_items}-{max_items} items each")
+    
+    # Show final stats
+    if len(df) == 0:
+        print("Error: No data remaining after filtering!")
+        return
+    
+    print("\nFinal dataset statistics:")
+    show_stats(df, args.user_col, args.basket_col)
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # Split data into history and future
+    history_df, future_df = split_history_future(df, args.user_col, args.basket_col)
+    
+    # Save the results
+    history_file = os.path.join(args.output_dir, f"{args.output_name}_history.csv")
+    future_file = os.path.join(args.output_dir, f"{args.output_name}_future.csv")
+    
+    history_df.to_csv(history_file, index=False)
+    future_df.to_csv(future_file, index=False)
+    
+    print(f"\nDatasets saved:")
+    print(f"History: {history_file} ({len(history_df)} records)")
+    print(f"Future: {future_file} ({len(future_df)} records)")
+    print("Done!")
 
 
 if __name__ == "__main__":

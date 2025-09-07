@@ -180,6 +180,7 @@ def filter_by_product_assortment(df, n_products, product_col='product_id', baske
 def split_history_future(df, user_col='user_id', basket_col='order_number'):
     """
     Split dataframe into history and future based on most recent order per user.
+    Only includes users who have at least 2 orders (so they have both history and future).
     
     Args:
         df (pd.DataFrame): Input dataframe
@@ -188,22 +189,60 @@ def split_history_future(df, user_col='user_id', basket_col='order_number'):
     
     Returns:
         tuple: (history_df, future_df) - history contains all but most recent order per user,
-               future contains only the most recent order per user
+               future contains only the most recent order per user.
+               Both datasets contain the same set of users.
     """
+    if df.empty:
+        return df.copy(), df.copy()
+    
+    # First, filter to only include users with at least 2 orders
+    # This ensures every user has both history and future data
+    user_order_counts = df.groupby(user_col)[basket_col].nunique()
+    users_with_multiple_orders = user_order_counts[user_order_counts >= 2].index
+    
+    # Filter out users with only one order
+    df_filtered = df[df[user_col].isin(users_with_multiple_orders)].copy()
+    
+    if df_filtered.empty:
+        print("Warning: No users with multiple orders found. Cannot create history/future split.")
+        return df.copy(), df.copy()
+    
+    original_users = df[user_col].nunique()
+    filtered_users = df_filtered[user_col].nunique()
+    
+    if original_users > filtered_users:
+        print(f"Filtered out {original_users - filtered_users} users with only 1 order")
+        print(f"Remaining users: {filtered_users} (all have ≥2 orders)")
+    
     # Find the most recent order for each user (assuming highest order_number is most recent)
-    most_recent_orders = df.groupby(user_col)[basket_col].max()
+    most_recent_orders = df_filtered.groupby(user_col)[basket_col].max()
     
-    # Create a function to check if a row is the most recent for its user
-    def is_most_recent_order(row):
-        user_id = row[user_col]
-        order_num = row[basket_col]
-        return most_recent_orders[user_id] == order_num
+    # Create boolean mask for future orders using vectorized operations
+    # Merge the max order info back to the original dataframe
+    df_with_max = df_filtered.merge(
+        most_recent_orders.reset_index().rename(columns={basket_col: 'max_order'}),
+        on=user_col,
+        how='left'
+    )
     
-    # Apply the function to create a boolean mask
-    future_mask = df.apply(is_most_recent_order, axis=1)
+    # Create mask for future orders (where current order equals max order for the user)
+    future_mask = df_with_max[basket_col] == df_with_max['max_order']
     
-    # Split data
-    future_df = df[future_mask].reset_index(drop=True)
-    history_df = df[~future_mask].reset_index(drop=True)
+    # Split data - both datasets will have the same users now
+    future_df = df_with_max[future_mask].drop(columns='max_order').reset_index(drop=True)
+    history_df = df_with_max[~future_mask].drop(columns='max_order').reset_index(drop=True)
+    
+    # Verify that both datasets contain the same set of users
+    future_users = set(future_df[user_col].unique())
+    history_users = set(history_df[user_col].unique())
+    
+    if history_users != future_users:
+        print(f"Warning: User mismatch detected in split_history_future")
+        print(f"Future users: {len(future_users)}")
+        print(f"History users: {len(history_users)}")
+        print(f"Users only in future: {future_users - history_users}")
+        print(f"Users only in history: {history_users - future_users}")
+    else:
+        print(f"Success: Both history and future contain the same {len(future_users)} users")
     
     return history_df, future_df
