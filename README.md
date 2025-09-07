@@ -7,7 +7,9 @@ A command-line tool for filtering and sampling next-basket recommendation datase
 ## Features
 1. **Sample random users** - Randomly select N users and keep all their data2. **Filter by basket count per user** - Keep users with min-max baskets3. **Filter by items per basket** - Keep baskets with min-max items4. **Show dataset statistics** - View current dataset stats5. **Save and exit** - Split and save as history/future CSVs
 ## Data Structure
-Expected CSV format:```csv
+Expected CSV format:
+
+```csv
 user_id,order_number,product_id
 1,1,1
 011,1,1
